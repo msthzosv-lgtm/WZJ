@@ -1,0 +1,381 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>双击运行 - 俄罗斯方块</title>
+    <style>
+      :root {
+        color-scheme: dark;
+      }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        display: grid;
+        place-items: center;
+        background: #111827;
+        color: #e5e7eb;
+        font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+      }
+      .game {
+        display: flex;
+        gap: 16px;
+        align-items: flex-start;
+        padding: 20px;
+        background: #1f2937;
+        border-radius: 12px;
+        box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+      }
+      canvas {
+        border: 2px solid #374151;
+        background: #0b1220;
+      }
+      .panel {
+        width: 170px;
+      }
+      .panel h1 {
+        margin: 0 0 12px;
+        font-size: 18px;
+      }
+      .info {
+        margin-bottom: 12px;
+        line-height: 1.5;
+      }
+      .kbd {
+        display: inline-block;
+        margin-right: 4px;
+        margin-bottom: 4px;
+        padding: 2px 6px;
+        border: 1px solid #4b5563;
+        border-radius: 6px;
+        background: #111827;
+        font-size: 12px;
+      }
+      button {
+        margin-top: 10px;
+        width: 100%;
+        border: none;
+        border-radius: 8px;
+        padding: 10px;
+        font-weight: 600;
+        color: #111827;
+        background: #34d399;
+        cursor: pointer;
+      }
+      .controls {
+        margin-top: 10px;
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 6px;
+      }
+      .controls button {
+        margin-top: 0;
+        padding: 8px;
+        color: #e5e7eb;
+        background: #374151;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="game">
+      <canvas id="board" width="300" height="600" tabindex="0" aria-label="俄罗斯方块游戏画布"></canvas>
+      <div class="panel">
+        <h1>俄罗斯方块</h1>
+        <div class="info">分数: <span id="score">0</span></div>
+        <div class="info">等级: <span id="level">1</span></div>
+        <div class="info">消行: <span id="lines">0</span></div>
+        <div class="info">
+          <div><span class="kbd">←</span><span class="kbd">→</span> 左右移动</div>
+          <div><span class="kbd">↓</span> 加速下落</div>
+          <div><span class="kbd">↑</span> 旋转</div>
+          <div><span class="kbd">空格</span> 一键到底</div>
+          <div><span class="kbd">P</span> 暂停</div>
+        </div>
+        <button id="restart">重新开始</button>
+        <div class="controls">
+          <button data-action="left">←</button>
+          <button data-action="rotate">↻</button>
+          <button data-action="right">→</button>
+          <button data-action="down">↓</button>
+          <button data-action="drop">到底</button>
+          <button data-action="pause">暂停</button>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      const COLS = 10;
+      const ROWS = 20;
+      const BLOCK = 30;
+      const SHAPES = {
+        I: [[1, 1, 1, 1]],
+        O: [
+          [1, 1],
+          [1, 1],
+        ],
+        T: [
+          [0, 1, 0],
+          [1, 1, 1],
+        ],
+        S: [
+          [0, 1, 1],
+          [1, 1, 0],
+        ],
+        Z: [
+          [1, 1, 0],
+          [0, 1, 1],
+        ],
+        J: [
+          [1, 0, 0],
+          [1, 1, 1],
+        ],
+        L: [
+          [0, 0, 1],
+          [1, 1, 1],
+        ],
+      };
+      const COLORS = {
+        I: '#22d3ee',
+        O: '#facc15',
+        T: '#a78bfa',
+        S: '#4ade80',
+        Z: '#f87171',
+        J: '#60a5fa',
+        L: '#fb923c',
+      };
+
+      const canvas = document.getElementById('board');
+      const ctx = canvas.getContext('2d');
+      const scoreEl = document.getElementById('score');
+      const levelEl = document.getElementById('level');
+      const linesEl = document.getElementById('lines');
+      const restartBtn = document.getElementById('restart');
+      const focusBoard = () => canvas.focus({ preventScroll: true });
+
+      const createBoard = () => Array.from({ length: ROWS }, () => Array(COLS).fill(null));
+      let board;
+      let piece;
+      let score;
+      let lines;
+      let level;
+      let dropCounter;
+      let dropInterval;
+      let last;
+      let gameOver;
+      let paused;
+      let frameId;
+
+      function randomPiece() {
+        const keys = Object.keys(SHAPES);
+        const type = keys[Math.floor(Math.random() * keys.length)];
+        const shape = SHAPES[type].map((r) => r.slice());
+        return { type, shape, x: Math.floor(COLS / 2) - Math.ceil(shape[0].length / 2), y: -1 };
+      }
+
+      function rotate(shape) {
+        return shape[0].map((_, i) => shape.map((row) => row[i]).reverse());
+      }
+
+      function collides(testPiece) {
+        return testPiece.shape.some((row, dy) =>
+          row.some((v, dx) => {
+            if (!v) return false;
+            const x = testPiece.x + dx;
+            const y = testPiece.y + dy;
+            if (x < 0 || x >= COLS || y >= ROWS) return true;
+            if (y < 0) return false;
+            return board[y][x] !== null;
+          })
+        );
+      }
+
+      function merge() {
+        piece.shape.forEach((row, dy) => {
+          row.forEach((v, dx) => {
+            if (!v) return;
+            const x = piece.x + dx;
+            const y = piece.y + dy;
+            if (y >= 0) board[y][x] = piece.type;
+          });
+        });
+      }
+
+      function clearLines() {
+        let cleared = 0;
+        for (let y = ROWS - 1; y >= 0; y--) {
+          if (board[y].every((cell) => cell !== null)) {
+            board.splice(y, 1);
+            board.unshift(Array(COLS).fill(null));
+            cleared++;
+            y++;
+          }
+        }
+        if (cleared) {
+          lines += cleared;
+          score += [0, 100, 300, 500, 800][cleared] * level;
+          level = Math.floor(lines / 10) + 1;
+          dropInterval = Math.max(120, 700 - (level - 1) * 60);
+          updatePanel();
+        }
+      }
+
+      function spawn() {
+        piece = randomPiece();
+        if (collides(piece)) {
+          gameOver = true;
+          draw();
+          drawCenterText('游戏结束', '按“重新开始”');
+        }
+      }
+
+      function updatePanel() {
+        scoreEl.textContent = String(score);
+        linesEl.textContent = String(lines);
+        levelEl.textContent = String(level);
+      }
+
+      function hardDrop() {
+        while (!collides({ ...piece, y: piece.y + 1 })) {
+          piece.y += 1;
+        }
+        step();
+      }
+
+      function step() {
+        piece.y += 1;
+        if (collides(piece)) {
+          piece.y -= 1;
+          merge();
+          clearLines();
+          spawn();
+        }
+        dropCounter = 0;
+      }
+
+      function drawCell(x, y, color) {
+        ctx.fillStyle = color;
+        ctx.fillRect(x * BLOCK, y * BLOCK, BLOCK - 1, BLOCK - 1);
+      }
+
+      function draw() {
+        ctx.fillStyle = '#0b1220';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        board.forEach((row, y) =>
+          row.forEach((type, x) => {
+            if (type) drawCell(x, y, COLORS[type]);
+          })
+        );
+
+        piece.shape.forEach((row, dy) =>
+          row.forEach((v, dx) => {
+            if (!v) return;
+            const y = piece.y + dy;
+            if (y >= 0) drawCell(piece.x + dx, y, COLORS[piece.type]);
+          })
+        );
+      }
+
+      function drawCenterText(line1, line2) {
+        ctx.fillStyle = 'rgba(0,0,0,0.65)';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.fillStyle = '#fff';
+        ctx.textAlign = 'center';
+        ctx.font = 'bold 36px system-ui';
+        ctx.fillText(line1, canvas.width / 2, canvas.height / 2 - 10);
+        ctx.font = '16px system-ui';
+        ctx.fillText(line2, canvas.width / 2, canvas.height / 2 + 24);
+      }
+
+      function loop(ts = 0) {
+        if (gameOver) return;
+        const delta = ts - last;
+        last = ts;
+        if (!paused) {
+          dropCounter += delta;
+          if (dropCounter > dropInterval) step();
+        }
+        draw();
+        if (paused) drawCenterText('暂停中', '按 P 继续');
+        frameId = requestAnimationFrame(loop);
+      }
+
+      function restart() {
+        if (frameId) cancelAnimationFrame(frameId);
+        board = createBoard();
+        score = 0;
+        lines = 0;
+        level = 1;
+        dropCounter = 0;
+        dropInterval = 700;
+        last = 0;
+        gameOver = false;
+        paused = false;
+        updatePanel();
+        spawn();
+        loop();
+        focusBoard();
+      }
+
+      function handleAction(action) {
+        if (gameOver) return;
+        if (action === 'pause') {
+          paused = !paused;
+          return;
+        }
+        if (paused) return;
+
+        if (action === 'left') {
+          const next = { ...piece, x: piece.x - 1 };
+          if (!collides(next)) piece = next;
+        } else if (action === 'right') {
+          const next = { ...piece, x: piece.x + 1 };
+          if (!collides(next)) piece = next;
+        } else if (action === 'down') {
+          step();
+        } else if (action === 'rotate') {
+          const rotated = { ...piece, shape: rotate(piece.shape) };
+          if (!collides(rotated)) piece = rotated;
+        } else if (action === 'drop') {
+          hardDrop();
+        }
+      }
+
+      document.addEventListener('keydown', (e) => {
+        if ([
+          'ArrowLeft',
+          'ArrowRight',
+          'ArrowDown',
+          'ArrowUp',
+          'Space',
+          'KeyP',
+        ].includes(e.code)) {
+          e.preventDefault();
+        }
+        if (e.key === 'ArrowLeft') {
+          handleAction('left');
+        } else if (e.key === 'ArrowRight') {
+          handleAction('right');
+        } else if (e.key === 'ArrowDown') {
+          handleAction('down');
+        } else if (e.key === 'ArrowUp') {
+          handleAction('rotate');
+        } else if (e.code === 'Space') {
+          handleAction('drop');
+        } else if (e.key.toLowerCase() === 'p') {
+          handleAction('pause');
+        }
+      });
+
+      canvas.addEventListener('pointerdown', focusBoard);
+      window.addEventListener('focus', focusBoard);
+
+      document.querySelectorAll('[data-action]').forEach((btn) => {
+        btn.addEventListener('click', () => handleAction(btn.dataset.action));
+      });
+
+      restartBtn.addEventListener('click', restart);
+      restart();
+    </script>
+  </body>
+</html>
