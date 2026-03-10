@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>AI 本地扒谱工作台</title>
+    <style>
+      body { font-family: system-ui, -apple-system, sans-serif; max-width: 840px; margin: 18px auto; padding: 0 10px; }
+      .card { border: 1px solid #ddd; border-radius: 12px; padding: 14px; margin-bottom: 12px; }
+      button { border: 0; border-radius: 8px; padding: 8px 12px; cursor: pointer; margin-right: 8px; }
+      .primary { background: #2563eb; color: white; }
+      .ok { background: #16a34a; color: white; }
+      select, input { margin: 6px 0; padding: 6px; }
+      pre { white-space: pre-wrap; background: #111827; color: #e5e7eb; padding: 10px; border-radius: 8px; max-height: 320px; overflow: auto; }
+      .muted { color: #666; font-size: 12px; }
+    </style>
+  </head>
+  <body>
+    <h1>AI 本地扒谱（离线引擎）</h1>
+    <p class="muted">无外部 API，优先本地开源模型。若本地有 basic-pitch 则自动使用，否则回退到 pyin。</p>
+
+    <div class="card">
+      <form id="form">
+        <input type="file" name="audio" accept="audio/*" required /> <br />
+        <label>引擎：</label>
+        <select name="engine">
+          <option value="auto" selected>auto（优先 basic_pitch）</option>
+          <option value="basic_pitch">basic_pitch（本地已安装时）</option>
+          <option value="local_pyin">local_pyin（纯本地 CPU）</option>
+        </select>
+        <br />
+        <label>策略：</label>
+        <select name="profile">
+          <option value="clean">clean（更干净）</option>
+          <option value="balanced" selected>balanced</option>
+          <option value="rich">rich（更多音符）</option>
+        </select>
+        <br />
+        <label>量化网格（秒，可空）：</label>
+        <input type="number" name="snap_grid" step="0.01" placeholder="如 0.125" />
+        <br /><br />
+        <button class="primary" type="submit">上传并处理</button>
+      </form>
+    </div>
+
+    <div class="card">
+      <button class="ok" id="playBtn" disabled>播放转写结果</button>
+      <button id="stopBtn" disabled>停止播放</button>
+      <a id="downloadLink" style="display:none">下载 MIDI</a>
+      <pre id="log">等待处理...</pre>
+    </div>
+
+    <script>
+      const API_BASE = 'http://127.0.0.1:8780';
+      const form = document.getElementById('form');
+      const log = document.getElementById('log');
+      const downloadLink = document.getElementById('downloadLink');
+      const playBtn = document.getElementById('playBtn');
+      const stopBtn = document.getElementById('stopBtn');
+
+      let noteEvents = [];
+      let audioCtx = null;
+      let playingNodes = [];
+
+      function midiToFreq(midi) {
+        return 440 * Math.pow(2, (midi - 69) / 12);
+      }
+
+      function stopPlayback() {
+        for (const n of playingNodes) {
+          try { n.stop(); } catch (_) {}
+        }
+        playingNodes = [];
+      }
+
+      async function playNotes() {
+        if (!noteEvents.length) return;
+        stopPlayback();
+        audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
+        const t0 = audioCtx.currentTime + 0.08;
+
+        for (const n of noteEvents) {
+          const osc = audioCtx.createOscillator();
+          const gain = audioCtx.createGain();
+          osc.type = 'sine';
+          osc.frequency.value = midiToFreq(n.pitch);
+          gain.gain.value = Math.min(0.4, Math.max(0.05, (n.velocity || 64) / 180));
+          osc.connect(gain).connect(audioCtx.destination);
+          osc.start(t0 + n.start);
+          osc.stop(t0 + n.end);
+          playingNodes.push(osc);
+        }
+      }
+
+      playBtn.addEventListener('click', playNotes);
+      stopBtn.addEventListener('click', stopPlayback);
+
+      form.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        log.textContent = '处理中，请稍候...';
+        downloadLink.style.display = 'none';
+        playBtn.disabled = true;
+        stopBtn.disabled = true;
+
+        const fd = new FormData(form);
+        if (!fd.get('snap_grid')) fd.delete('snap_grid');
+
+        const resp = await fetch(`${API_BASE}/api/transcribe`, {
+          method: 'POST',
+          body: fd,
+        });
+        const data = await resp.json();
+
+        if (!resp.ok) {
+          log.textContent = '失败：' + JSON.stringify(data, null, 2);
+          return;
+        }
+
+        noteEvents = data.notes || [];
+        log.textContent = JSON.stringify(data, null, 2);
+        downloadLink.href = `${API_BASE}${data.midi_url}`;
+        downloadLink.textContent = '下载 MIDI';
+        downloadLink.style.display = 'inline-block';
+        playBtn.disabled = noteEvents.length === 0;
+        stopBtn.disabled = noteEvents.length === 0;
+      });
+    </script>
+  </body>
+</html>

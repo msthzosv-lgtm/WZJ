@@ -21,3 +21,28 @@ python3 -m http.server 8000
 - `P`：暂停/继续
 
 同时提供了页面按钮，可在触屏设备上操作。
+
+## AI 扒谱相关文档
+- `docs/ai_transcription_design.md`
+- `docs/ai_transcription_optimization_and_oneclick.md`
+- `docs/ai_midi_local_bundle.md`（全本地离线版说明）
+
+## 全本地离线版（推荐下载目录）
+
+新增 `ai_midi_local_bundle/`：
+- 不使用外部 API，优先本地开源引擎
+- 支持 Python 3.8+
+- 一键启动并自动打开浏览器
+- 上传音频后本地处理，输出 MIDI，可在页面播放与下载
+
+### Linux/macOS
+```bash
+cd ai_midi_local_bundle
+./scripts/start.sh
+```
+
+### Windows
+双击：
+```text
+ai_midi_local_bundle\windows\start_windows.bat
+```
