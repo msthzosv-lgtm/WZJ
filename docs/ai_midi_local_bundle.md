@@ -38,3 +38,10 @@ ai_midi_local_bundle\windows\start_windows.bat
     - `profile`: `clean|balanced|rich`
     - `snap_grid`: 可选，节拍吸附网格（秒）
 - `GET /api/result/{job_id}`：下载 MIDI
+
+## Windows 11 启动闪退修复说明
+
+已修复常见闪退原因：
+- 去掉了 bat 中不兼容的 heredoc 语法（`<<PYCODE`），改为 `python -c` 版本检查。
+- 启动脚本增加逐步错误检查与 `pause`，失败时窗口不会秒退。
+- 自动写入日志：`ai_midi_local_bundle/logs/startup.log`，便于定位问题。
